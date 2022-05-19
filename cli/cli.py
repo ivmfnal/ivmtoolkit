@@ -46,36 +46,44 @@ class CLICommand(object):
         return self(command, out_opts, args, *params, **kwargs)
 
     @classmethod
-    def format_usage(cls, indent="    "):
+    def usage(cls, first_indent="", rest_indent=None):
+        if rest_indent is None:
+            rest_indent = first_indent
         try:
             usage = cls.Usage
         except AttributeError:
             usage = ""
-        
         if "\n" in usage:
             first_line, rest = usage.split("\n", 1)
             first_line = first_line.strip()
             rest = textwrap.dedent(rest)
-            return first_line + "\n" + textwrap.indent(rest, indent)
+            return first_indent + first_line + "\n" + textwrap.indent(rest, rest_indent)
         else:
             return usage.strip()
         
-    
+    @classmethod
+    def format_usage(cls, first_indent, rest_indent):
+        try:
+            usage = cls.Usage
+        except AttributeError:
+            usage = ""
+        if "\n" in usage:
+            first_line, rest = usage.split("\n", 1)
+            rest = rest.rstrip()
+            first_line = first_line.strip()
+            return [first_indent + first_line] + [rest_indent + l for l in textwrap.dedent(rest).split("\n")]
+        else:
+            return [first_indent + usage.strip()]
+        
+    @classmethod
+    def usage(cls, first_indent="", rest_indent=None):
+        if rest_indent is None:
+            rest_indent = first_indent
+        return "\n".join(cls.format_usage(first_indent, rest_indent))
+
 class CLI(object):
     
     def __init__(self, *args):
-        #
-        # commands:
-        # [
-        #    ("word", CommandClass), ...
-        # ]
-        #
-        # groups:
-        # [
-        #    ("groups name", commands),
-        # ]
-        #
-        
         groups = []
         group = []
         group_name = ""
@@ -85,7 +93,7 @@ class CLI(object):
             if a.endswith(":"):
                 if group:
                     groups.append((group_name, group))
-                group_name = a[:-1]
+                group_name = a
                 group = []
             else:
                 w = a
@@ -97,10 +105,12 @@ class CLI(object):
             groups.append((group_name, group))
         self.Groups = groups
             
-    def add_group(self, group_name, commands):
-        self.Groups.append((group_name, commands))
+    def add_group(self, title, commands):
+        if (not title) and self.Groups:
+            raise ValueError("Only first group can be unnamed")
+        self.Groups.append((title, commands))
         
-    def execute(self, argv, *params, usage_on_empty = True, usage_on_unknown = True, **kwargs):
+    def run(self, argv, *params, usage_on_empty = True, usage_on_unknown = True, **kwargs):
         
         if not argv:
             if usage_on_empty:
@@ -115,13 +125,13 @@ class CLI(object):
             self.print_usage()
             return
 
-        cmd_class = None
+        interp = None
         for group_name, commands in self.Groups:
             for w, c in commands:
                 if word == w:
-                    cmd_class = c
+                    interp = c
                     break
-            if cmd_class is not None:
+            if interp is not None:
                 break
         else:
             if usage_on_unknown:
@@ -130,26 +140,42 @@ class CLI(object):
             else:
                 raise UnknownCommand(word, argv)
         
-        return cmd_class().run(word, rest, *params, **kwargs)
+        if isinstance(interp, CLI):
+            return interp.run(rest, *params, 
+                        usage_on_empty = usage_on_empty, usage_on_unknown = usage_on_unknown,
+                        **kwargs)
+        else:
+            return interp().run(word, rest, *params, **kwargs)
 
-    def usage(self, as_list=False, headline="Usage:", end=""):
+    def usage(self, as_list=False, headline="Usage:", end="", indent=""):
         out = []
         if headline:
-            out.append(headline)
+            out.append(indent + headline)
+
         maxcmd = 0
-        for group_name, commands in self.Groups:
-            maxcmd = max(maxcmd, max(len(w) for (w, _) in commands))
+        for group_name, interpreters in self.Groups:
+            maxcmd = max(maxcmd, max(len(w) for (w, _) in interpreters))
         
-        for i, (group_name, commands) in enumerate(self.Groups):
-            if i > 0:
-                out.append("")
-            out.append(group_name)
-            fmt = f"%-{maxcmd}s %s"
+        for i, (group_name, interpreters) in enumerate(self.Groups):
             if group_name:
-                fmt = "  " + fmt
-            for word, cmd in commands:
-                usage = cmd.format_usage()
-                out.append(fmt % (word, usage))
+                out.append(indent + group_name)
+            fmt = f"%-{maxcmd}s %s"
+            offset = "  " if group_name else ""
+            for i, (word, interp) in enumerate(interpreters):
+                #if i > 0:
+                #    out.append("")
+                if isinstance(interp, CLI):
+                    out.append(indent + offset + word)
+                    usage = interp.usage(headline="", indent=indent + offset + "  ")
+                    out.append(usage)
+                else:
+                    # assume CLICommand subclass
+                    #usage = interp.usage(" "*(maxcmd-len(word)), indent + " "*(maxcmd+1))
+                    #usage = interp.usage("", indent + " "*(maxcmd+1))
+                    usage = interp.usage("", indent + "  ")
+                    out.append(indent + word + " " + usage)
+                    out.append("")
+        #print(self, f": usage:{out}")
         if as_list:
             return out
         else:
@@ -162,27 +188,6 @@ class CLI(object):
             print(headline, file=file)
         if head_paragraph:
             print(head_paragraph, file=file)
+        usage = self.usage(headline=None)
         print(self.usage(headline=None), file=file)
         
-class CommandA(CLICommand):
-    
-    Opts = "vc:"
-    Usage = """[-v] [-c <config>]
-            -c <config> - config file
-            -v          - verbose output
-    """
-    
-    def __call__(self, cmd, opts, args, x, y):
-        print("Command:", cmd, "  opts:", opts, "  args:", args, "  x:", x, "  y:", y)
-
-if __name__ == "__main__":
-    import sys
-    cli = CLI(
-            "b", CommandA,
-            "extra:",
-            "a", CommandA
-    )
-    x = "X"
-    y = "Y"
-
-    cli.execute(sys.argv[1:], x, y, usage_on_unknown=True)
