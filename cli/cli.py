@@ -18,12 +18,21 @@ class InvalidArguments(Exception):
 class InvalidOptions(Exception):
     pass
     
+def format_paragraph(indent, text):
+    if "\n" in text:
+        first_line, rest = text.split("\n", 1)
+        return [first_line.strip()] + [indent + l for l in textwrap.dedent(rest.rstrip()).split("\n")]
+    else:
+        return [text.strip()]
+    
 class CLIInterpreter(object):
 
     Opts = ("", [])
     Usage = ""
+    Usage0 = ""
     Defaults = {}
     MinArgs = 0
+    Hidden = False
 
     def get_options(self):
         tup = self.Opts
@@ -74,97 +83,91 @@ class CLIInterpreter(object):
 class CLICommand(CLIInterpreter):
 
     def _run(self, command, context, argv, usage_on_error = True):
+
+        if argv and argv[0] == "-?":
+            print(self.usage(command), file=sys.stderr)
+            return
+            
+        if argv and argv[0] in ("help", "--help"):
+            print(self.help(command), file=sys.stderr)
+            return
+
         try:
             opts, args = self.getopt(argv)
+            return self(command, context, opts, args)
         except (InvalidOptions, InvalidArguments):
             if usage_on_error:
                 cmd = "" if not command else f"for {command}"
                 print(f"Invalid arguments or options for {cmd}\n", file=sys.stderr)
-                print(self.usage(), file=sys.stderr)
+                print(self.help(command), file=sys.stderr)
+                return
             else:
                 raise
-        return self(command, context, opts, args)
 
-    def format_usage(self, first_indent, rest_indent):
+    def help(self, command="", indent=""):
         try:
             usage = self.Usage
         except AttributeError:
             usage = ""
-        usage = usage.rstrip()
-        if "\n" in usage:
-            first_line, rest = usage.split("\n", 1)
-            rest = rest.rstrip()
-            first_line = first_line.strip()
-            return [first_indent + first_line] + [rest_indent + l for l in textwrap.dedent(rest).split("\n")]
-        else:
-            return [first_indent + usage.strip()]
-        
-    def usage(self, first_indent="", rest_indent=None):
-        if rest_indent is None:
-            rest_indent = first_indent
-        return "\n".join(self.format_usage(first_indent, rest_indent))
+            
+        if command: command = command + " "
+        return indent + command + "\n".join(format_paragraph(indent + "  ", usage))
+
+    def usage(self, word=""):
+        usage = (self.Usage0 or self.Usage.split("\n", 1)[0]).strip()
+        if usage.startswith(word + " "):
+            usage = usage[len(word)+1:]
+        return usage
 
 class CLI(CLIInterpreter):
     
-    def __init__(self, *args, hidden=False):
+    def __init__(self, *args, hidden=False, usage="", opts=""):
         self.Hidden = hidden
-        groups = []
-        group = []
-        group_name = ""
+        self.UsageParagraph = usage
+        self.Opts = opts
+        self.Words = []          
+        self.Interpreters = {}
+
         i = 0
         while i < len(args):
-            a = args[i]
-            if a.endswith(":"):
-                if group:
-                    groups.append((group_name, group))
-                group_name = a
-                group = []
-            else:
-                w = a
-                c = args[i+1]
-                i += 1
-                group.append((w, c))
-            i += 1
-        if group:
-            groups.append((group_name, group))
-        self.Groups = groups
-            
-    def add_group(self, title, commands):
-        if (not title) and self.Groups:
-            raise ValueError("Only first group can be unnamed")
-        self.Groups.append((title, commands))
+            w, c = args[i], args[i+1]
+            self.Words.append(w)
+            self.Interpreters[w] = c
+            i += 2
         
+    def commands(self):
+        return self.Words
+            
     # overridable
     def update_context(self, context, opts, args):
         return context
     
-    def find_interpreter(self, word):
-        interp = None
-        for group_name, commands in self.Groups:
-            for w, c in commands:
-                if word == w:
-                    interp = c
-                    break
-            if interp is not None:
-                break
-        #print(self.__class__.__name__, f".find_interpreter({word}) ->", interp)
-        return interp
+    def _run(self, pre_command, context, argv, usage_on_error = True):
+        
+        #print(self,"._run: pre_command:", pre_command)
 
-    def _run(self, command, context, argv, usage_on_error = True):
+        if argv and argv[0] == "-?":
+            print(self.usage(pre_command), file=sys.stderr)
+            return
+            
+        if argv and argv[0] in ("help", "--help"):
+            print(self.help(pre_command), file=sys.stderr)
+            return
+
         try:
             opts, args = self.getopt(argv)
         except (InvalidOptions, InvalidArguments):
             if usage_on_error:
                 cmd = "" if not command else f"for {command}"
                 print(f"Invalid arguments or options for {cmd}\n", file=sys.stderr)
-                print(self.usage(), file=sys.stderr)
+                print(self.usage(pre_command), file=sys.stderr)
                 return
             else:
                 raise
 
         if not args:
             if usage_on_error:
-                print(self.usage(), file=sys.stderr)
+                print(self.usage(pre_command), file=sys.stderr)
                 return
             else:
                 raise EmptyCommandLine()
@@ -175,74 +178,94 @@ class CLI(CLIInterpreter):
         context = self.update_context(context, opts, args)
         word, rest = args[0], args[1:]
         
-        if word in ("help", "-h", "-?", "--help"):
-            print(self.usage(long=True), file=sys.stderr())
+        if word in ("help", "--help"):
+            print(self.help(word), file=sys.stderr)
+            return
         
-        interp = self.find_interpreter(word)
+        interp = self.Interpreters.get(word)
         if interp is None:
             print(f"Unknown command {command} {word}\n", file=sys.stderr)
             if usage_on_error:
                 indent = "" if not command else "  "
-                print("Usage:" if not command else f"Usage for {command}:\n", 
-                      self.usage(indent=indent),
+                print("Usage:" if not command else f"Usage for {command}:")
+                print(self.usage(command, indent=indent),
                       file=sys.stderr)
                 return
             else:
-                raise UnknownCommand(word, argv)
+                raise UnknownCommand(word, args)
         
-        return interp._run(word, context, rest, usage_on_error = usage_on_error)
+        if pre_command: pre_command = pre_command + " "
+        return interp._run(pre_command + word, context, rest, usage_on_error = usage_on_error)
         
-    def run(self, argv, context=None, usage_on_error = True):
-        self._run("", context, argv, usage_on_error)
+    def run(self, argv, context=None, usage_on_error = True, argv0=None):
+        argv0 = argv0 or argv[0]
+        command, argv = argv0, argv[1:]
+        self._run(command, context, argv, usage_on_error)
+        
+    def format_usage_paragraph(self, indent=""):
+        return "\n".join(format_paragraph(indent, self.UsageParagraph))
+        
+    def usage_headline(self):
+        return self.UsageParagraph.split("\n", 1)[0].strip()
 
-    def usage(self, headline="", as_list=False, long=True, end="", indent=""):
+    def usage(self, pre_command="", as_list=False, long=True, end="", indent=""):
 
-        if self.Hidden:
-            return [] if as_list else ""
-        
         out = []
-        
-        if headline:
-            out.append(indent + headline)
+        if pre_command:
+            out.append(pre_command + self.usage_headline())
+            indent = "  " + indent
 
-        maxcmd = 0
-        maxgroup = 0
-        for group_name, interpreters in self.Groups:
-            maxcmd = max(maxcmd, max(len(w) for (w, _) in interpreters))
-            maxgroup = max(len(group_name), maxgroup)
+        maxcmd = max(len(w) for w in self.Interpreters.keys())
+        maxcmd = max(maxcmd, 4)     # for "help"
+        fmt = f"%-{maxcmd}s %s"
 
-        if not long:
-            for group_name, interpreters in self.Groups:
-                head = (f"%-{maxgroup}s: " % (group_name,)) if group_name else ""
-            line = head + ",".join(w for w, i in interpreters)
-            out.append(indent + line)
-        else:
-            for i, (group_name, interpreters) in enumerate(self.Groups):
-                if group_name:
-                    out.append(indent + group_name)
-                fmt = f"%-{maxcmd}s %s"
-                offset = "  " if group_name else ""
-                for i, (word, interp) in enumerate(interpreters):
-                    if isinstance(interp, CLI):
-                        if not interp.Hidden:
-                            out.append(indent + offset + word)
-                            usage = interp.usage(headline="", indent=indent + offset + "    ", long=False)
-                            out.append(usage)
-                    elif isinstance(interp, CLICommand):
-                        # assume CLICommand subclass
-                        #usage = interp.usage(" "*(maxcmd-len(word)), indent + " "*(maxcmd+1))
-                        #usage = interp.usage("", indent + " "*(maxcmd+1))
-                        usage = interp.usage("", indent + "    ")
-                        pre_word = "" if usage.strip().split(None, 1)[0] == word else word + " "
-                        out.append(indent + pre_word + usage)
-                        out.append("")
-                    else:
-                        raise ValueError("Unrecognized type of the interpreter: %s %s" % (type(interp), interp))
+        for w in self.Words:
+            interp = self.Interpreters[w]
+            if not interp.Hidden:
+                if isinstance(interp, CLI):
+                    down_usage = ",".join(interp.Words)
+                else:
+                    down_usage = interp.usage()
+                out.append(indent + (fmt % (w, down_usage)))
+        out.append(indent + (fmt % ("help", "print help")))
         #print(self, f": usage:{out}")
         if as_list:
             return out
         else:
             return "\n".join(out) + end
+            
+    def help(self, pre_command="", indent=""):
+
+        out = []
+        if pre_command: pre_command = pre_command + " "
+        formatted_usage = self.format_usage_paragraph(indent + "  ")
+        if formatted_usage: 
+            formatted_usage = formatted_usage + "\n"
+        else:
+            formatted_usage = "<command> [<command options, agruments> ...]\n"
+        out.append(indent + pre_command + formatted_usage)
+        out.append("Commands:")
+        indent += "  "
+        maxcmd = max(len(w) for w in self.Interpreters.keys())
+        maxcmd = max(maxcmd, 4)     # for "help"
+        fmt = f"%-{maxcmd}s %s"
+
+        for word in self.Words:
+            interp = self.Interpreters[word]
+            if not interp.Hidden:
+                if isinstance(interp, CLI):
+                    out.append(indent + (fmt % (word, ",".join(interp.commands()))))
+                elif isinstance(interp, CLICommand):
+                    # assume CLICommand subclass
+                    #usage = interp.usage(" "*(maxcmd-len(word)), indent + " "*(maxcmd+1))
+                    #usage = interp.usage("", indent + " "*(maxcmd+1))
+                    cmd_usage = interp.usage(word)
+                    out.append(indent + (fmt % (word, cmd_usage)))
+                else:
+                    raise ValueError("Unrecognized type of the interpreter: %s %s" % (type(interp), interp))
+        out.append(indent + (fmt % ("help", "print help")))
+        #print(self, f": usage:{out}")
+        return "\n".join(out)
         
     def print_usage(self, headline="Usage:", head_paragraph = "", file=None):
         if file is None: file = sys.stderr
