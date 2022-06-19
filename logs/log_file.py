@@ -83,15 +83,16 @@ class LogFile(Primitive):
             self.CurLogBegin = time.time()
 
         @synchronized
-        def log(self, msg, raw=False, add_timestamp=True):
-            t = time.time()
+        def log(self, msg, raw=False, t=None):
+            if t is None:   t = time.time()
             if self.Interval == 'midnight':
                 if datetime.date.today() != self.LastLog:
                         self.newLog()
             elif isinstance(self.Interval, (int, float)):
                 if t > self.CurLogBegin + self.Interval:
                         self.newLog()
-            if add_timestamp and not raw:
+                timestamp = make_timestamp(t)
+            if t != False and not raw:
                 msg = "%s: %s" % (make_timestamp(t), msg)
             self._write(msg if raw else msg + "\n")
 
