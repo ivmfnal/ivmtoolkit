@@ -175,13 +175,14 @@ class CLI(CLIInterpreter):
 
         #print(f"{self.__class__.__name__}._run(): argv:", argv, "  args:", args)
 
-        context = self.update_context(context, opts, args)
         word, rest = args[0], args[1:]
         
         if word in ("help", "--help"):
             print(self.help(word), file=sys.stderr)
             return
         
+        context = self.update_context(context, word, opts, args)
+
         interp = self.Interpreters.get(word)
         if interp is None:
             print(f"Unknown command {pre_command} {word}\n", file=sys.stderr)
@@ -228,7 +229,8 @@ class CLI(CLIInterpreter):
                 else:
                     down_usage = interp.usage()
                 out.append(indent + (fmt % (w, down_usage)))
-        out.append(indent + (fmt % ("help", "-- print help")))
+        out.append("")
+        out.append(indent + (fmt % ("help", "")))
         #print(self, f": usage:{out}")
         if as_list:
             return out
@@ -267,7 +269,8 @@ class CLI(CLIInterpreter):
                         out.append(indent + (fmt % (word, cmd_usage)))
                     else:
                         raise ValueError("Unrecognized type of the interpreter: %s %s" % (type(interp), interp))
-        out.append(indent + (fmt % ("help", "-- print help")))
+        out.append("")
+        out.append(indent + (fmt % ("help", "")))
         #print(self, f": usage:{out}")
         return "\n".join(out)
         
