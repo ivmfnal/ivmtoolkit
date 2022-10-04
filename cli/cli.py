@@ -8,14 +8,21 @@ class UnknownCommand(Exception):
     def __str__(self):
         return f"Uknown command: {self.Command}\n" + \
             f"    command line: {self.Argv}"
+            
+class CLIException(Exception):
+    def __init__(self, message=None):
+        self.Message = message
 
-class EmptyCommandLine(Exception):
+    def __str__(self):
+        return self.Message or self.__class__.__name__
+
+class EmptyCommandLine(CLIException):
     pass
     
-class InvalidArguments(Exception):
+class InvalidArguments(CLIException):
     pass
     
-class InvalidOptions(Exception):
+class InvalidOptions(CLIException):
     pass
     
 def format_paragraph(indent, text):
@@ -33,6 +40,7 @@ class CLIInterpreter(object):
     Defaults = {}
     MinArgs = 0
     Hidden = False
+    GNUStyle = False
 
     def get_options(self):
         tup = self.Opts
@@ -69,7 +77,10 @@ class CLIInterpreter(object):
         short_opts, long_opts = self.get_options()
         #print(self, ".getopt(): short_opts, long_opts:", short_opts, long_opts)
         try:
-            opts, args = getopt.getopt(argv, short_opts, long_opts)
+            if self.GNUStyle:
+                opts, args = getopt.gnu_getopt(argv, short_opts, long_opts)
+            else:
+                opts, args = getopt.getopt(argv, short_opts, long_opts)
             #print(self, ".getopt(): opts, args:", opts, args)
         except getopt.GetoptError:
             raise InvalidOptions()
@@ -84,6 +95,8 @@ class CLIInterpreter(object):
     
 class CLICommand(CLIInterpreter):
 
+    GNUStyle = True
+
     def _run(self, command, context, argv, usage_on_error = True):
 
         if argv and argv[0] == "-?":
@@ -97,10 +110,12 @@ class CLICommand(CLIInterpreter):
         try:
             opts, args = self.getopt(argv)
             return self(command, context, opts, args)
-        except (InvalidOptions, InvalidArguments):
+        except (InvalidOptions, InvalidArguments) as e:
             if usage_on_error:
                 cmd = "" if not command else f"for {command}"
-                print(f"Invalid arguments or options for {cmd}\n", file=sys.stderr)
+                msg = e.Message or f"Invalid arguments or options for {cmd}\n"
+                print(msg, file=sys.stderr)
+                print("\nUsage:")
                 print(self.help(command), file=sys.stderr)
                 return
             else:
@@ -123,6 +138,8 @@ class CLICommand(CLIInterpreter):
 
 class CLI(CLIInterpreter):
     
+    GNUStyle = False
+
     def __init__(self, *args):
         self.UsageParagraph = self.Usage
         self.Words = []          
@@ -143,9 +160,6 @@ class CLI(CLIInterpreter):
         return context
     
     def _run(self, pre_command, context, argv, usage_on_error = True):
-        
-        #print(self,"._run: pre_command:", pre_command)
-
         if argv and argv[0] == "-?":
             print(self.usage(pre_command), file=sys.stderr)
             return
@@ -172,9 +186,6 @@ class CLI(CLIInterpreter):
             else:
                 raise EmptyCommandLine()
             
-
-        #print(f"{self.__class__.__name__}._run(): argv:", argv, "  args:", args)
-
         word, rest = args[0], args[1:]
         
         if word in ("help", "--help"):
