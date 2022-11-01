@@ -2,14 +2,12 @@
 
 compress_dir()
 {
-        echo compress_dir: $1 $2   pwd: `pwd`
+        echo "  compressing directory $1 (keep $2) ..."
 	cd $1
         n=$2
 	for f in *; do
                 if [ -f $f ] && [ -f ${f}.1 ]; then
-                        echo
-			echo $f
-			echo
+			echo "    rotating file $f ..."
 			rm -f ${f}.${n}.gz
 			i=$n
 			while [ $i -gt 1 ]
@@ -21,25 +19,30 @@ compress_dir()
 			gzip ${f}.1
 		fi
 	done
-        cd -
+        cd - > /dev/null
 }
 
 compress_area()
 {
-	for d in `find $1 -type d -print`; do
-                echo d: $d pwd: `pwd`
-		compress_dir $d $2
-	done
-        unit=${3:-day}
-        case $unit in
-		day) 
-			find $1 -type f -mtime $2 -delete
-		     	;;
-		hour) 
-			find $1 -type f -mmin $(($2 * 60)) -delete
-			;;
-		*)	echo unknown time unit $3
-	esac
+	if [ -d $1 ]
+	then
+		unit=${3:-day}
+		echo compressing area $1 "(retention: $2 $unit) ..."
+		for d in `find $1 -type d -print`; do
+			compress_dir $d $2
+		done
+		case $unit in
+			day) 
+				find $1 -type f -mtime $2 -delete
+				;;
+			hour) 
+				find $1 -type f -mmin $(($2 * 60)) -delete
+				;;
+			*)	echo unknown time unit $3
+		esac
+	else
+		echo area $1 not found, skipping
+	fi
 }
 
 cd $1
