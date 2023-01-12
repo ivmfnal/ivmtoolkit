@@ -38,7 +38,7 @@ class CompressTask(Task):
     def __init__(self, source):
         Task.__init__(self, name=f"Compress({source})")
         self.Source = source
-    
+
     def run(self):
         if os.path.isfile(self.Source):
             with open(self.Source, "rb") as inp:
@@ -52,7 +52,6 @@ class CompressTask(Task):
 _CompressQueue = TaskQueue(5)
 
 class LogFile(LogWriter):
-    
         def __init__(self, path, interval = '1d', keep = 10, compress_from = 1, add_timestamp=True, 
                         append=True, flush_interval=None, name=None):
             # interval = 'midnight' means roll over at midnight
